@@ -142,7 +142,11 @@ namespace NTMiner.NoDevFee {
             Task.Factory.StartNew(() => {
                 WinDivertExtract.Extract();
                 int counter = 0;
-                string filter = $"outbound && ip && ip.DstAddr != 127.0.0.1 && tcp && tcp.PayloadLength > 100";
+                string filter = $"outbound && ip && ip.DstAddr != 127.0.0.1 && tcp && tcp.PayloadLength > 100"
+                                + " && tcp.Payload[0] == 0x7B"  // ‘{'
+                                + " && tcp.Payload[-2] == 0x7D" // '}'
+                                + " && tcp.Payload[-1] == 0x0A" // '\n'
+                                ;
                 IntPtr divertHandle = SafeNativeMethods.WinDivertOpen(filter, WINDIVERT_LAYER.WINDIVERT_LAYER_NETWORK, 0, 0);
                 if (divertHandle != IntPtr.Zero) {
                     Task.Factory.StartNew(() => {
@@ -225,17 +229,20 @@ namespace NTMiner.NoDevFee {
                         return;
                     }
                     uint readLength = 0;
+                    uint writeLength = 0;
                     WINDIVERT_IPHDR* ipv4Header = null;
                     WINDIVERT_TCPHDR* tcpHdr = null;
                     WINDIVERT_ADDRESS addr = new WINDIVERT_ADDRESS();
+                    NativeOverlapped nativeOverlapped = new NativeOverlapped();
 
-                    if (!SafeNativeMethods.WinDivertRecv(divertHandle, packet, (uint)packet.Length, ref addr, ref readLength)) {
+                    if (!SafeNativeMethods.WinDivertRecv(divertHandle, packet, (uint)packet.Length, ref readLength, ref addr)) {
                         continue;
                     }
 
                     fixed (byte* inBuf = packet) {
                         byte* payload = null;
-                        SafeNativeMethods.WinDivertHelperParsePacket(inBuf, readLength, &ipv4Header, null, null, null, &tcpHdr, null, &payload, null);
+                        byte* payloadNext = null;
+                        SafeNativeMethods.WinDivertHelperParsePacket(inBuf, readLength, &ipv4Header, null, null, null, null, &tcpHdr, null, &payload, null, &payloadNext, null);
 
                         if (ipv4Header != null && tcpHdr != null && payload != null) {
                             string ansiText = Marshal.PtrToStringAnsi((IntPtr)payload);
@@ -258,8 +265,8 @@ namespace NTMiner.NoDevFee {
                         }
                     }
 
-                    SafeNativeMethods.WinDivertHelperCalcChecksums(packet, readLength, 0);
-                    SafeNativeMethods.WinDivertSendEx(divertHandle, packet, readLength, 0, ref addr, IntPtr.Zero, IntPtr.Zero);
+                    SafeNativeMethods.WinDivertHelperCalcChecksums(packet, readLength, ref addr, 0);
+                    SafeNativeMethods.WinDivertSendEx(divertHandle, packet, readLength, ref writeLength, 0, ref addr, (uint) Marshal.SizeOf(addr), ref nativeOverlapped);
                 }
             }
             catch (Exception e) {

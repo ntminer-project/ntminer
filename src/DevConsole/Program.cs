@@ -2,6 +2,7 @@
 using System;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace NTMiner {
@@ -55,11 +56,13 @@ namespace NTMiner {
             try {
                 while (s_running) {
                     uint readLength = 0;
+                    uint writeLength = 0;
                     WINDIVERT_IPHDR* ipv4Header = null;
                     WINDIVERT_TCPHDR* tcpHdr = null;
                     WINDIVERT_ADDRESS addr = new WINDIVERT_ADDRESS();
+                    NativeOverlapped nativeOverlapped = new NativeOverlapped();
 
-                    if (!SafeNativeMethods.WinDivertRecv(handle, packet, (uint)packet.Length, ref addr, ref readLength)) {
+                    if (!SafeNativeMethods.WinDivertRecv(handle, packet, (uint)packet.Length, ref readLength, ref addr)) {
                         continue;
                     }
 
@@ -70,7 +73,8 @@ namespace NTMiner {
 
                     fixed (byte* inBuf = packet) {
                         byte* payload = null;
-                        SafeNativeMethods.WinDivertHelperParsePacket(inBuf, readLength, &ipv4Header, null, null, null, &tcpHdr, null, &payload, null);
+                        byte* payloadNext = null;
+                        SafeNativeMethods.WinDivertHelperParsePacket(inBuf, readLength, &ipv4Header, null, null, null, null, &tcpHdr, null, &payload, null, &payloadNext, null);
 
                         if (ipv4Header != null && tcpHdr != null && payload != null) {
                             string text = Marshal.PtrToStringAnsi((IntPtr)payload);
@@ -87,8 +91,8 @@ namespace NTMiner {
                         }
                     }
 
-                    SafeNativeMethods.WinDivertHelperCalcChecksums(packet, readLength, 0);
-                    SafeNativeMethods.WinDivertSendEx(handle, packet, readLength, 0, ref addr, IntPtr.Zero, IntPtr.Zero);
+                    SafeNativeMethods.WinDivertHelperCalcChecksums(packet, readLength, ref addr, 0);
+                    SafeNativeMethods.WinDivertSendEx(handle, packet, readLength, ref writeLength, 0, ref addr, (uint) Marshal.SizeOf(addr), ref nativeOverlapped);
                 }
 
             }
